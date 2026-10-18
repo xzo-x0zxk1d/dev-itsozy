@@ -1,0 +1,22 @@
+[package]
+name = "ozy-platform"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+vercel_runtime = { version = "2.4", features = ["axum"] }
+tower = "0.5"
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres"] }
+
+[[bin]]
+name = "entry"
+path = "api/entry.rs"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

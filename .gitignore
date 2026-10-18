@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+.vercel/
+.tools/
+target/
+work/
+*.log
+*.db
+*.sqlite*
+node_modules/
+.agents/
+skills-lock.json
