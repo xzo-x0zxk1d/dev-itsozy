@@ -456,7 +456,8 @@ fn dashboard(section: &str) -> Html<String> {
 <form class="card inline-form" id="name-form"><h3>Profile</h3><label>Display name<input name="name" maxlength="80" required></label><p class="muted small" id="account-email"></p><button class="btn" type="submit">Save</button></form>
 <form class="card inline-form" id="password-form"><h3>Change password</h3><label>Current password<input name="current_password" type="password" autocomplete="current-password" required></label>
 <label>New password<input name="new_password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label><p class="muted small">Changing your password signs out every session.</p><button class="btn" type="submit">Update password</button></form>
-<div class="card"><h3>Sign out</h3><button class="btn btn-ghost" type="button" id="logout">Sign out of this browser</button></div>"#
+<div class="card"><h3>Sign out</h3><button class="btn btn-ghost" type="button" id="logout">Sign out of this browser</button></div>
+<form class="card inline-form" id="delete-form"><h3>Delete account</h3><p class="muted small">Permanently deletes your account, API keys, logs, monitors, saved extractions, crawls and webhook relays. This cannot be undone.</p><label>Confirm with your password<input name="password" type="password" autocomplete="current-password" required></label><button class="btn btn-danger" type="submit">Delete my account</button></form>"#
         }
         _ => {
             r#"<h1>Overview</h1><p class="muted" id="welcome">Loading your account…</p>

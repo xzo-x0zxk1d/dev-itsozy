@@ -763,8 +763,7 @@ pub fn ocr_options(raw: &Value) -> Result<Value> {
     if whitelist.len() > 128 || !whitelist.chars().all(|c| c.is_ascii_graphic()) {
         return Err(invalid("whitelist must be up to 128 printable ASCII characters"));
     }
-    Ok(json!({"grayscale":raw.get("grayscale").and_then(Value::as_bool).unwrap_or(true),
-        "threshold":threshold,"scale":scale,"psm":psm,"whitelist":whitelist,"lang":"eng"}))
+    Ok(json!({"threshold":threshold,"scale":scale,"psm":psm,"whitelist":whitelist,"lang":"eng"}))
 }
 
 pub async fn ocr(State(app): State<App>, request: Request) -> Result<Json<Value>> {

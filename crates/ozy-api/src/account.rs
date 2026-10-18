@@ -131,6 +131,17 @@ pub async fn login(State(app): State<App>, headers: HeaderMap, Json(input): Json
     }
     session(&app, user.ok_or_else(unauthorized)?.get("id")).await
 }
+/// Public, always 200: lets pages check sign-in state without logging a 401.
+pub async fn session_state(State(app): State<App>, headers: HeaderMap) -> Result<Json<Value>> {
+    let Some(token) = session_token(&headers).filter(|t| t.len() <= 100) else {
+        return Ok(Json(json!({"signed_in":false})));
+    };
+    let valid: Option<Uuid> = sqlx::query_scalar("SELECT user_id FROM ozy.sessions WHERE token_hash=$1 AND expires_at>now()")
+        .bind(ozy_auth::token_hash(&token))
+        .fetch_optional(&app.db)
+        .await?;
+    Ok(Json(json!({"signed_in":valid.is_some()})))
+}
 pub async fn logout(State(app): State<App>, headers: HeaderMap) -> Result<Response> {
     if let Some(token) = session_token(&headers) {
         sqlx::query("DELETE FROM ozy.sessions WHERE token_hash=$1")
@@ -171,6 +182,43 @@ pub async fn update_account(
         .execute(&app.db)
         .await?;
     Ok(Json(json!({"updated":true})))
+}
+#[derive(Deserialize)]
+pub struct AccountDeletion {
+    password: String,
+}
+/// Permanently deletes the account and, by cascade, its keys, logs, monitors,
+/// extractions, crawls, webhooks and sessions. Requires the current password.
+pub async fn delete_account(
+    State(app): State<App>,
+    Extension(id): Extension<Identity>,
+    Json(input): Json<AccountDeletion>,
+) -> Result<Response> {
+    let hash: String = sqlx::query_scalar("SELECT password_hash FROM ozy.users WHERE id=$1")
+        .bind(id.user_id)
+        .fetch_one(&app.db)
+        .await?;
+    let _permit = app.crypto_slots.acquire().await.map_err(|_| unauthorized())?;
+    let valid = tokio::task::spawn_blocking(move || ozy_auth::verify_password(&input.password, &hash))
+        .await
+        .map_err(|_| unauthorized())?;
+    if !valid {
+        return Err(Failure(
+            StatusCode::UNAUTHORIZED,
+            "invalid_credentials",
+            "Password is incorrect".into(),
+        ));
+    }
+    sqlx::query("DELETE FROM ozy.users WHERE id=$1")
+        .bind(id.user_id)
+        .execute(&app.db)
+        .await?;
+    let mut response = Json(json!({"deleted":true})).into_response();
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        cookie_value(&app, "", true).parse().map_err(|_| invalid("Cookie error"))?,
+    );
+    Ok(response)
 }
 #[derive(Deserialize)]
 pub struct PasswordUpdate {

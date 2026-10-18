@@ -52,13 +52,46 @@ impl Document {
             dom: Html::parse_document(source),
         })
     }
+    /// First 100 matches; the public API's per-rule limit.
     pub fn select(&self, selector: &str) -> Result<Vec<ElementRef<'_>>, Error> {
+        self.select_limit(selector, 100)
+    }
+    pub fn select_limit(&self, selector: &str, limit: usize) -> Result<Vec<ElementRef<'_>>, Error> {
         if selector.len() > 512 {
             return Err(Error::Invalid("Selector exceeds 512 bytes".into()));
         }
         let css = xpath_to_css(selector)?;
         let parsed = Selector::parse(&css).map_err(|_| Error::Invalid("Invalid or unsupported selector".into()))?;
-        Ok(self.dom.select(&parsed).take(100).collect())
+        Ok(self.dom.select(&parsed).take(limit).collect())
+    }
+    /// Visible text of up to `limit` matches (scripts and styles excluded).
+    pub fn texts(&self, selector: &str, limit: usize) -> Result<Vec<String>, Error> {
+        Ok(self.select_limit(selector, limit)?.into_iter().map(visible_text).collect())
+    }
+    /// Parses without the 2 MiB network cap, for local/batch use of the engine.
+    pub fn parse_unbounded(source: &str) -> Self {
+        Self {
+            dom: Html::parse_document(source),
+        }
+    }
+    /// Adaptive relocation without a selector: scores every element with the
+    /// fingerprint's tag. Returns (value, confidence, margin) or None when uncertain.
+    pub fn relocate(&self, saved: &Fingerprint) -> Option<(String, f64, f64)> {
+        let rule = Rule {
+            name: "relocate".into(),
+            selector: "ozy-never-matches-0".into(),
+            kind: "text".into(),
+            attribute: None,
+            adaptive: true,
+        };
+        let found = self.extract(&rule, Some(saved)).ok()?;
+        (found.match_type == "recovered").then(|| {
+            (
+                found.values.into_iter().next().unwrap_or_default(),
+                found.confidence,
+                found.candidate_margin,
+            )
+        })
     }
     pub fn extract(&self, rule: &Rule, saved: Option<&Fingerprint>) -> Result<Extraction, Error> {
         if rule.name.is_empty() || rule.name.len() > 64 || !matches!(rule.kind.as_str(), "text" | "html" | "attribute") {

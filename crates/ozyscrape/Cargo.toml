@@ -18,6 +18,7 @@ regex = "1"
 futures-util = "0.3"
 [dev-dependencies]
 criterion = "0.7"
+tl = "0.7"
 [[bench]]
 name = "extraction"
 harness = false

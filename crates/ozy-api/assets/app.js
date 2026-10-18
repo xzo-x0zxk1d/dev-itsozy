@@ -54,7 +54,9 @@
   $$(".site-nav a").forEach((a) => { if (a.getAttribute("href") === location.pathname) a.setAttribute("aria-current", "page"); });
 
   let account = null;
-  const accountReady = api("/api/v1/account").then((r) => {
+  const accountReady = api("/api/v1/auth/session").then(async (probe) => {
+    if (!probe.ok || !probe.data || !probe.data.signed_in) return { ok: false, status: 401 };
+    const r = await api("/api/v1/account");
     if (r.ok) {
       account = r.data;
       $$('[data-auth="anon"]').forEach((n) => (n.hidden = true));
@@ -208,6 +210,13 @@
       if (r.ok) location.assign("/login"); else showError("#dash-error", errorMessage(r));
     });
     $("#logout").addEventListener("click", async () => { await api("/api/v1/auth/logout", { method: "POST" }); location.assign("/"); });
+    const del = $("#delete-form");
+    del.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!confirm("Permanently delete your OZY account and all of its data?")) return;
+      const r = await api("/api/v1/account", { method: "DELETE", body: { password: del.password.value } });
+      if (r.ok) location.assign("/"); else showError("#dash-error", errorMessage(r));
+    });
   }
 
   if (page === "dashboard") {

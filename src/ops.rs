@@ -4,6 +4,7 @@
 //!   ozy-ops [--env-file PATH] status       list applied migrations and row counts
 //!   ozy-ops [--env-file PATH] schedule URL install the Supabase pg_cron job that calls URL/api/v1/internal/tick every minute
 //!   ozy-ops [--env-file PATH] unschedule   remove that job
+//!   ozy-ops [--env-file PATH] purge-test-users   delete accounts created by tests/smoke checks (@example.com prefixes)
 //!
 //! Secrets are read from the environment and never printed.
 use sqlx::Row;
@@ -113,6 +114,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .execute(&pool)
                 .await?;
             println!("Scheduled {JOB}: every minute -> {url} (secret stored in Supabase Vault)");
+        }
+        "purge-test-users" => {
+            // Accounts created by the automated tests and smoke checks; cascades all their data.
+            let deleted = sqlx::query(
+                "DELETE FROM ozy.users WHERE email LIKE '%@example.com' AND (email LIKE 'it-%' OR email LIKE 'quota-%'
+                 OR email LIKE 'worker-e2e-%' OR email LIKE 'prod-smoke-%' OR email LIKE 'prod-debug-%')",
+            )
+            .execute(&pool)
+            .await?
+            .rows_affected();
+            println!("Deleted {deleted} test accounts");
         }
         "unschedule" => {
             sqlx::query("SELECT cron.unschedule($1)").bind(JOB).execute(&pool).await?;

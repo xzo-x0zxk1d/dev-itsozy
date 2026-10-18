@@ -26,4 +26,4 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 tesseract = { version = "0.15", optional = true }
-chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"], optional = true }
+chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime", "bytes"], optional = true }

@@ -101,7 +101,7 @@ pub const APIS: &[ApiSpec] = &[
         method: "POST",
         path: "/api/v1/ocr/captcha",
         summary: "Tesseract OCR with preprocessing for your own test images.",
-        description: "Recognises text in PNG, JPEG or WebP images you own or are authorised to test. Images are preprocessed in Rust (grayscale, Otsu or fixed thresholding, resizing) and recognised with Tesseract through Rust bindings. Up to 5 images per request. This endpoint does not bypass third-party CAPTCHA services and makes no compatibility claims.",
+        description: "Recognises text in PNG, JPEG or WebP images you own or are authorised to test. Images are converted to grayscale and optionally resized and binarised (Otsu or fixed threshold) in Rust and recognised with Tesseract through Rust bindings. Up to 5 images per request. This endpoint does not bypass third-party CAPTCHA services and makes no compatibility claims.",
         permission: "ocr",
         cost: 10,
         runtime: Runtime::Worker,
@@ -119,7 +119,6 @@ pub const APIS: &[ApiSpec] = &[
                 true,
                 "1-5 base64 images (PNG/JPEG/WebP, max 1 MiB each). Or send multipart files with an `options` JSON part",
             ),
-            p("options.grayscale", "boolean", false, "Convert to grayscale first (default true)"),
             p(
                 "options.threshold",
                 "number | \"otsu\"",

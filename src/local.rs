@@ -9,7 +9,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     let app = ozy_api::from_env().await?;
-    let port = std::env::var("PORT").ok().and_then(|p| p.parse::<u16>().ok()).unwrap_or(3000);
+    let port = std::env::var("PORT").ok().and_then(|p| p.parse::<u16>().ok()).unwrap_or(3917);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     tracing::info!("OZY listening on http://127.0.0.1:{port}");
     axum::serve(listener, ozy_api::router(app)).await?;

@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: fmt, clippy, unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # Integration tests skip themselves without a database; unit tests run fully.
+      - run: cargo test --workspace
+
+  worker:
+    name: worker with OCR + browser features
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Tesseract and Leptonica
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libtesseract-dev libleptonica-dev tesseract-ocr-eng clang pkg-config
+      - run: cargo clippy -p ozy-worker --features ocr,browser --all-targets -- -D warnings
+      - run: cargo test -p ozy-worker --features ocr,browser

@@ -214,6 +214,7 @@ async fn full_platform_flow() {
     assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
     let login = c.post("/api/v1/auth/login", json!({"email":email,"password":password})).await;
     assert_eq!(login.status, StatusCode::OK);
+    assert_eq!(c.get("/api/v1/auth/session").await.json["signed_in"], true);
     let me = c.get("/api/v1/account").await;
     assert_eq!(me.json["user"]["email"], email.as_str());
 
@@ -380,12 +381,15 @@ async fn full_platform_flow() {
         .post("/api/v1/ocr/captcha", json!({"authorized_testing":true,"images":[png]}))
         .await;
     assert_eq!(ocr.json["error"]["code"], "worker_unavailable", "{}", ocr.text);
-    assert_eq!(
-        c.post("/api/v1/ocr/captcha", json!({"images":[png]})).await.status,
-        StatusCode::BAD_REQUEST
-    );
     let shot = c.post("/api/v1/screenshot", json!({"url":"https://example.org/"})).await;
     assert_eq!(shot.json["error"]["code"], "worker_unavailable", "{}", shot.text);
+    // Unavailable worker features must not consume quota.
+    let units_before: i64 = sqlx::query_scalar("SELECT COALESCE(sum(units),0) FROM ozy.request_logs WHERE endpoint IN ('/api/v1/ocr/captcha','/api/v1/screenshot') AND user_id=(SELECT id FROM ozy.users WHERE email=$1)")
+        .bind(&email)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(units_before, 0);
 
     // API 2: monitor
     eprintln!("[{:>6.1?}] API 2: monitor", clock.elapsed());
@@ -578,11 +582,42 @@ async fn full_platform_flow() {
         StatusCode::UNAUTHORIZED,
         "password change must revoke sessions"
     );
-    sqlx::query("DELETE FROM ozy.users WHERE email=$1")
+
+    // Account deletion requires the password and cascades everything
+    let relogin = c
+        .post("/api/v1/auth/login", json!({"email":email,"password":"another-long-password"}))
+        .await;
+    assert_eq!(relogin.status, StatusCode::OK);
+    let wrong_delete = c
+        .send(
+            "DELETE",
+            "/api/v1/account",
+            Some(json!({"password":"not-the-password"})),
+            &[("origin", ORIGIN)],
+        )
+        .await;
+    assert_eq!(wrong_delete.status, StatusCode::UNAUTHORIZED);
+    let deleted = c
+        .send(
+            "DELETE",
+            "/api/v1/account",
+            Some(json!({"password":"another-long-password"})),
+            &[("origin", ORIGIN)],
+        )
+        .await;
+    assert_eq!(deleted.json["deleted"], true, "{}", deleted.text);
+    let remaining: i64 = sqlx::query_scalar("SELECT count(*) FROM ozy.users WHERE email=$1")
         .bind(&email)
-        .execute(&app.db)
+        .fetch_one(&app.db)
         .await
         .unwrap();
+    assert_eq!(remaining, 0);
+    let orphans: i64 = sqlx::query_scalar("SELECT count(*) FROM ozy.webhooks WHERE id=$1::uuid")
+        .bind(&relay_id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(orphans, 0);
 }
 
 #[tokio::test]

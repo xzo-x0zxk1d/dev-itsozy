@@ -192,7 +192,10 @@ pub fn router(app: App) -> Router {
         .route("/api/v1/webhooks", post(jobs::create_webhook).get(jobs::list_webhooks))
         .route("/api/v1/webhooks/{id}", delete(jobs::delete_webhook))
         .route("/api/v1/webhooks/{id}/deliveries", get(jobs::deliveries))
-        .route("/api/v1/account", get(account::me).patch(account::update_account))
+        .route(
+            "/api/v1/account",
+            get(account::me).patch(account::update_account).delete(account::delete_account),
+        )
         .route("/api/v1/account/password", post(account::change_password))
         .route("/api/v1/keys", get(account::keys).post(account::create_key))
         .route("/api/v1/keys/{id}", delete(account::revoke_key))
@@ -205,6 +208,7 @@ pub fn router(app: App) -> Router {
         .merge(protected)
         .route("/api/v1/auth/register", post(account::register))
         .route("/api/v1/auth/login", post(account::login))
+        .route("/api/v1/auth/session", get(account::session_state))
         .route("/api/v1/hooks/{id}", post(jobs::receive_webhook))
         .route("/api/v1/internal/tick", post(jobs::tick).get(jobs::tick))
         .route("/api/v1/health", get(health))
@@ -291,6 +295,13 @@ async fn authenticate(State(app): State<App>, mut request: Request, next: Next) 
         Ok(id) => id,
         Err(e) => return e.into_response(),
     };
+    // Fail fast, before charging quota, when a worker-only API has no worker configured.
+    if app.worker_url.is_none() && (path == "/api/v1/ocr/captcha" || path == "/api/v1/screenshot") {
+        return services::worker_unavailable(
+            "This feature requires the optional self-hosted OZY worker, which is not configured on this deployment.",
+        )
+        .into_response();
+    }
     let management = is_management(&path);
     let cost = if management {
         0
