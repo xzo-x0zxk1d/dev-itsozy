@@ -63,11 +63,13 @@ Verified 2026-10-18. Never put credentials in this file. All values below are id
 
 ## Verified deployment
 
-- Production deployment of commit `c1b85c5`: `/api/v1/health` returned `database: true`, every page returned 200, and the security headers
-  (CSP, HSTS, X-Frame-Options, x-request-id) were present.
-- Production smoke test (every API through https, test account removed afterwards): all Vercel-hosted APIs passed;
-  OCR and screenshot returned `503 worker_unavailable` as designed; the SSRF probe was blocked with 403.
-  Median server-side duration was 36 ms (p95 144 ms, excluding a 4 s polite crawl).
+- Production deployment of commit `4eda402`: https://dev-itsozy-98oqwx13y-ko8382slayerbeast-9839s-projects.vercel.app,
+  aliased to https://dev.itsozy.lol. `/api/v1/health` returned `database: true`, every page returned 200, and the security headers
+  (CSP, HSTS, X-Frame-Options, x-request-id) were present. GitHub Actions CI for `4eda402` passed (including worker OCR tests).
+- Production smoke test on that deployment: **21/21 checks passed**. It exercised every API through https, then deleted its
+  test account. OCR and screenshot returned `503 worker_unavailable` (without charging quota) as designed; the SSRF probe
+  was blocked with 403. Median server-side duration was 18 ms (p95 67 ms, excluding a 4 s polite crawl).
+- Test accounts left over from development runs were purged from both databases (`ozy-ops purge-test-users`); both start empty.
 - The latest deployment URL and commit are shown by `vercel list dev-itsozy --scope ko8382slayerbeast-9839s-projects`.
 
 ## How automatic deployments work
