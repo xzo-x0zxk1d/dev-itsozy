@@ -1,0 +1,15 @@
+[package]
+name = "ozy-auth"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+[dependencies]
+argon2 = "0.5"
+rand = "0.8"
+sha2.workspace = true
+hex.workspace = true
+hmac = "0.12"
+aes-gcm = "0.10"
+base64 = "0.22"
+thiserror.workspace = true
+subtle = "2"

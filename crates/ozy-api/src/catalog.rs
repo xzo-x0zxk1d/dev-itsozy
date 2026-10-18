@@ -1,0 +1,441 @@
+//! Single source of truth for API documentation, the playground and /openapi.json.
+//! Example responses are illustrative shapes, not recorded output.
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Runtime {
+    /// Fully served by the Rust function on Vercel.
+    Vercel,
+    /// Core on Vercel; some options need the optional worker.
+    Hybrid,
+    /// Requires the optional self-hosted worker.
+    Worker,
+}
+
+impl Runtime {
+    pub fn label(self) -> &'static str {
+        match self {
+            Runtime::Vercel => "Runs on Vercel",
+            Runtime::Hybrid => "Vercel + optional worker",
+            Runtime::Worker => "Requires worker",
+        }
+    }
+    pub fn key(self) -> &'static str {
+        match self {
+            Runtime::Vercel => "vercel",
+            Runtime::Hybrid => "hybrid",
+            Runtime::Worker => "worker",
+        }
+    }
+}
+
+pub struct Param {
+    pub name: &'static str,
+    pub kind: &'static str,
+    pub required: bool,
+    pub description: &'static str,
+}
+
+pub struct ApiSpec {
+    pub number: u8,
+    pub slug: &'static str,
+    pub name: &'static str,
+    pub method: &'static str,
+    pub path: &'static str,
+    pub summary: &'static str,
+    pub description: &'static str,
+    pub permission: &'static str,
+    pub cost: u8,
+    pub runtime: Runtime,
+    pub runtime_note: &'static str,
+    pub params: &'static [Param],
+    pub example_request: &'static str,
+    pub example_response: &'static str,
+    pub errors: &'static [(u16, &'static str, &'static str)],
+    pub related: &'static [(&'static str, &'static str, &'static str)],
+}
+
+const fn p(name: &'static str, kind: &'static str, required: bool, description: &'static str) -> Param {
+    Param {
+        name,
+        kind,
+        required,
+        description,
+    }
+}
+
+pub const COMMON_ERRORS: &[(u16, &str, &str)] = &[
+    (400, "invalid_input", "A parameter is missing or invalid"),
+    (401, "unauthorized", "No valid API key or session"),
+    (403, "permission_denied", "The key does not include this API's permission"),
+    (429, "quota_exceeded", "Free-tier quota reached (20 units/min, 100 units/day)"),
+    (503, "database_unavailable", "Persistent storage is temporarily unavailable"),
+];
+
+const FETCH_ERRORS: &[(u16, &str, &str)] = &[
+    (
+        403,
+        "destination_blocked",
+        "URL resolves to a private, loopback, metadata or non-standard-port destination",
+    ),
+    (403, "robots_denied", "The site's robots.txt disallows OzyScrape"),
+    (413, "response_too_large", "Upstream response exceeded 2 MiB"),
+    (429, "domain_rate_limited", "Wait one second between requests to the same host"),
+    (502, "upstream_failed", "The site could not be reached"),
+    (504, "upstream_timeout", "The site did not respond in time"),
+];
+
+const WORKER_ERRORS: &[(u16, &str, &str)] = &[
+    (
+        503,
+        "worker_unavailable",
+        "The optional self-hosted worker is not configured on this deployment",
+    ),
+    (502, "worker_failed", "The worker could not complete the job"),
+];
+
+pub const APIS: &[ApiSpec] = &[
+    ApiSpec {
+        number: 1,
+        slug: "ocr",
+        name: "CAPTCHA Image Recognition",
+        method: "POST",
+        path: "/api/v1/ocr/captcha",
+        summary: "Tesseract OCR with preprocessing for your own test images.",
+        description: "Recognises text in PNG, JPEG or WebP images you own or are authorised to test. Images are preprocessed in Rust (grayscale, Otsu or fixed thresholding, resizing) and recognised with Tesseract through Rust bindings. Up to 5 images per request. This endpoint does not bypass third-party CAPTCHA services and makes no compatibility claims.",
+        permission: "ocr",
+        cost: 10,
+        runtime: Runtime::Worker,
+        runtime_note: "Tesseract's native libraries cannot run inside Vercel functions, so recognition runs on the optional isolated worker. Without OZY_WORKER_URL this endpoint returns 503 worker_unavailable.",
+        params: &[
+            p(
+                "authorized_testing",
+                "boolean",
+                true,
+                "Must be true: confirms the images are yours or from an authorised test environment",
+            ),
+            p(
+                "images",
+                "string[]",
+                true,
+                "1-5 base64 images (PNG/JPEG/WebP, max 1 MiB each). Or send multipart files with an `options` JSON part",
+            ),
+            p("options.grayscale", "boolean", false, "Convert to grayscale first (default true)"),
+            p(
+                "options.threshold",
+                "number | \"otsu\"",
+                false,
+                "Binarise at 0-255 or with Otsu's method",
+            ),
+            p("options.scale", "number", false, "Resize factor 0.25-4 (default 1)"),
+            p(
+                "options.psm",
+                "integer",
+                false,
+                "Tesseract page segmentation mode: 3, 6, 7 (default), 8, 11 or 13",
+            ),
+            p("options.whitelist", "string", false, "Restrict recognised characters"),
+        ],
+        example_request: r#"{"authorized_testing": true, "images": ["iVBORw0KGgo..."], "options": {"threshold": "otsu", "scale": 2, "psm": 7}}"#,
+        example_response: r#"{"results": [{"text": "X7K2P", "confidence": 87.4, "width": 400, "height": 120}], "formats": ["png"], "engine": "tesseract"}"#,
+        errors: WORKER_ERRORS,
+        related: &[],
+    },
+    ApiSpec {
+        number: 2,
+        slug: "monitor",
+        name: "Website Monitor",
+        method: "POST",
+        path: "/api/v1/monitor",
+        summary: "Uptime, response time and content-change monitoring with signed webhooks.",
+        description: "Creates a persistent monitor that checks availability, response time and visible-content changes on a schedule (every 5 minutes to 24 hours). The first check runs immediately. Transitions emit monitor.down, monitor.up and monitor.content_changed notifications, and optional HMAC-signed webhooks. History and uptime percentages are kept for 30 days.",
+        permission: "monitor",
+        cost: 1,
+        runtime: Runtime::Vercel,
+        runtime_note: "Checks run inside the Rust function. Scheduled checks are triggered by /api/v1/internal/tick (Supabase pg_cron every minute when configured; Vercel daily cron as fallback).",
+        params: &[
+            p("url", "string", true, "Public http(s) URL to monitor"),
+            p("interval_seconds", "integer", false, "300-86400 (default 300)"),
+            p(
+                "selector",
+                "string",
+                false,
+                "CSS selector; content changes are detected on its visible text only",
+            ),
+            p("webhook_url", "string", false, "Public https URL for signed event deliveries"),
+        ],
+        example_request: r#"{"url": "https://example.com", "interval_seconds": 300, "selector": "main"}"#,
+        example_response: r#"{"monitor": {"id": "6f1c…", "url": "https://example.com/", "interval_seconds": 300, "last_status": 200, "last_available": true}, "stats": {"checks": 1, "uptime_24h": 100.0, "average_response_ms_24h": 182}, "history": [{"status": 200, "duration_ms": 182, "available": true, "changed": false}]}"#,
+        errors: FETCH_ERRORS,
+        related: &[
+            ("GET", "/api/v1/monitor", "List your monitors"),
+            (
+                "GET",
+                "/api/v1/monitor/{id}",
+                "Configuration, uptime statistics and the last 100 checks",
+            ),
+            ("DELETE", "/api/v1/monitor/{id}", "Delete a monitor and its history"),
+        ],
+    },
+    ApiSpec {
+        number: 3,
+        slug: "scrape",
+        name: "Web Scraper",
+        method: "POST",
+        path: "/api/v1/scrape",
+        summary: "OzyScrape extraction: CSS/XPath rules, adaptive selectors, Markdown, caching.",
+        description: "Fetches a page (respecting robots.txt and per-domain pacing) or parses supplied HTML, then applies up to 20 extraction rules. Rules support CSS selectors and a documented XPath subset, returning text, HTML or attributes. Adaptive rules store a structural fingerprint; when the selector later stops matching, OzyScrape scores candidates by tag, text, attributes, classes, ancestry, neighbours and sibling position, and returns `recovered` only above a confidence and margin threshold, otherwise `uncertain` with no values. Concurrent crawling is available through /api/v1/crawls.",
+        permission: "scrape",
+        cost: 1,
+        runtime: Runtime::Hybrid,
+        runtime_note: "Fetching and extraction run on Vercel. `render: true` (JavaScript rendering) requires the optional browser worker.",
+        params: &[
+            p("url", "string", false, "Page to fetch (exactly one of url or html)"),
+            p("html", "string", false, "Inline HTML up to 2 MiB"),
+            p(
+                "rules[]",
+                "object[]",
+                false,
+                "{name, selector, kind: text|html|attribute, attribute?, adaptive?}",
+            ),
+            p("markdown", "boolean", false, "Include a Markdown rendering of the body"),
+            p("cache_seconds", "integer", false, "Cache the result for up to 3600 s"),
+            p("render", "boolean", false, "Render JavaScript in the worker before extraction"),
+        ],
+        example_request: r#"{"url": "https://example.com", "rules": [{"name": "heading", "selector": "h1"}, {"name": "link", "selector": "//a", "kind": "attribute", "attribute": "href", "adaptive": true}], "markdown": true}"#,
+        example_response: r#"{"url": "https://example.com/", "status": 200, "fields": {"heading": {"values": ["Example Domain"], "match_type": "exact", "confidence": 1.0, "candidate_margin": 1.0, "fingerprint": null}}, "metadata": {"title": "Example Domain"}, "markdown": "Example Domain\n==============\n…", "cached": false}"#,
+        errors: FETCH_ERRORS,
+        related: &[
+            (
+                "POST",
+                "/api/v1/crawls",
+                "Start a concurrent crawl {url, rules, depth ≤3, max_pages ≤20, concurrency ≤4}",
+            ),
+            ("GET", "/api/v1/crawls/{id}", "Crawl state, checkpoint progress and page results"),
+            ("POST", "/api/v1/crawls/{id}/resume", "Resume from the last checkpoint"),
+            ("DELETE", "/api/v1/crawls/{id}", "Cancel a crawl"),
+        ],
+    },
+    ApiSpec {
+        number: 4,
+        slug: "screenshot",
+        name: "Screenshot API",
+        method: "POST",
+        path: "/api/v1/screenshot",
+        summary: "Desktop, mobile and full-page captures as PNG, JPEG or WebP.",
+        description: "Captures a page in headless Chromium driven over the Chrome DevTools Protocol from Rust. Supports desktop (1440×900) and mobile (390×844 @2x) presets, custom viewports, full-page capture and PNG/JPEG/WebP output. All browser traffic passes through the worker's Rust egress proxy, which blocks private and metadata addresses.",
+        permission: "screenshot",
+        cost: 10,
+        runtime: Runtime::Worker,
+        runtime_note: "Chromium cannot run reliably inside Vercel functions; captures run on the optional worker. Without it this endpoint returns 503 worker_unavailable.",
+        params: &[
+            p("url", "string", true, "Public http(s) URL"),
+            p("device", "string", false, "desktop (default) or mobile"),
+            p("width / height", "integer", false, "Custom viewport, 320-2560 × 240-2560"),
+            p("full_page", "boolean", false, "Capture the full scroll height"),
+            p("format", "string", false, "png (default), jpeg or webp"),
+            p("quality", "integer", false, "1-100 for jpeg/webp (default 80)"),
+        ],
+        example_request: r#"{"url": "https://example.com", "device": "mobile", "full_page": true, "format": "webp"}"#,
+        example_response: r#"{"image_base64": "UklGR…", "format": "webp", "width": 390, "height": 1688, "bytes": 48211, "final_url": "https://example.com/"}"#,
+        errors: WORKER_ERRORS,
+        related: &[],
+    },
+    ApiSpec {
+        number: 5,
+        slug: "intelligence",
+        name: "Website Intelligence",
+        method: "GET",
+        path: "/api/v1/intelligence",
+        summary: "CMS, framework, library, hosting and TLS certificate fingerprints with evidence.",
+        description: "Fetches one page and applies about 50 deterministic fingerprints to HTML, script sources, the generator meta tag and response headers. Each technology carries a combined confidence and the exact evidence that matched. TLS details (subject, issuer, validity, SANs, protocol and cipher) come from a verified handshake to the same validated address.",
+        permission: "intelligence",
+        cost: 1,
+        runtime: Runtime::Vercel,
+        runtime_note: "Fully served by the Rust function on Vercel.",
+        params: &[p("url", "query string", true, "Public http(s) URL")],
+        example_request: "?url=https://vercel.com",
+        example_response: r#"{"url": "https://vercel.com/", "technologies": [{"name": "Next.js", "category": "Frontend framework", "confidence": 1.0, "evidence": [{"source": "html", "key": "/_next/"}]}, {"name": "Vercel", "category": "Hosting", "confidence": 1.0, "evidence": [{"source": "header", "key": "x-vercel-id"}]}], "tls": {"https": true, "certificate": {"issuer": "C=US, O=Let's Encrypt, CN=R11", "days_remaining": 61, "protocol": "TLSv1_3"}}}"#,
+        errors: FETCH_ERRORS,
+        related: &[],
+    },
+    ApiSpec {
+        number: 6,
+        slug: "pdf",
+        name: "PDF Parser",
+        method: "POST",
+        path: "/api/v1/pdf/parse",
+        summary: "Text, metadata and Markdown from PDFs, with OCR for scanned pages.",
+        description: "Parses PDFs up to 3 MiB in pure Rust: document metadata, per-page text, and JSON or Markdown output. Parsing runs on an isolated blocking thread with a 25-second limit; malformed files fail safely. Pages with almost no text are flagged as scanned; with `ocr: true`, their embedded JPEG images are sent to the worker for Tesseract OCR.",
+        permission: "pdf",
+        cost: 10,
+        runtime: Runtime::Hybrid,
+        runtime_note: "Text and metadata extraction run on Vercel. OCR of scanned pages needs the optional worker; without it, `ocr_status` reports worker_unavailable and text pages are still returned.",
+        params: &[
+            p("file", "multipart file", false, "The PDF (or use data / url)"),
+            p("data", "string", false, "Base64 PDF"),
+            p("url", "string", false, "Public URL of a PDF"),
+            p("format", "string", false, "json (default) or markdown"),
+            p("max_pages", "integer", false, "1-200 (default 50)"),
+            p("ocr", "boolean", false, "OCR scanned pages through the worker"),
+        ],
+        example_request: r#"{"url": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf", "format": "markdown"}"#,
+        example_response: r##"{"version": "1.4", "page_count": 1, "pages_returned": 1, "metadata": {"title": "dummy"}, "markdown": "# dummy\n\n## Page 1\n\nDummy PDF file\n\n", "scanned_pages": 0, "ocr_status": "not_needed"}"##,
+        errors: &[
+            (
+                422,
+                "pdf_unprocessable",
+                "The file is encrypted, malformed or could not be parsed safely",
+            ),
+            (422, "pdf_timeout", "Parsing exceeded 25 seconds"),
+        ],
+        related: &[],
+    },
+    ApiSpec {
+        number: 7,
+        slug: "preview",
+        name: "Link Preview",
+        method: "GET",
+        path: "/api/v1/preview",
+        summary: "Title, description, Open Graph image, favicon, canonical URL and site name.",
+        description: "Fetches a page with robots.txt respected and returns normalised preview metadata with absolute URLs, plus Open Graph, Twitter card and article meta tags.",
+        permission: "preview",
+        cost: 1,
+        runtime: Runtime::Vercel,
+        runtime_note: "Fully served by the Rust function on Vercel.",
+        params: &[p("url", "query string", true, "Public http(s) URL")],
+        example_request: "?url=https://github.com",
+        example_response: r#"{"url": "https://github.com/", "status": 200, "metadata": {"title": "GitHub", "description": "…", "image": "https://github.githubassets.com/…png", "favicon": "https://github.githubassets.com/favicons/favicon.svg", "canonical_url": "https://github.com/", "site_name": "GitHub", "language": "en"}, "public_metadata": {"og:type": "object"}}"#,
+        errors: FETCH_ERRORS,
+        related: &[],
+    },
+    ApiSpec {
+        number: 8,
+        slug: "performance",
+        name: "Website Performance",
+        method: "POST",
+        path: "/api/v1/performance",
+        summary: "Latency, time to first byte, HTML size, redirects and resource counts.",
+        description: "By default measures a real HTTP fetch from the Vercel region: total time, time to first byte, HTML bytes, redirect chain and declared sub-resources. Responses state `measurement: \"http_fetch\"`. With `browser: true` the worker loads the page in Chromium and returns Navigation Timing and paint metrics, labelled `measurement: \"browser\"`.",
+        permission: "performance",
+        cost: 1,
+        runtime: Runtime::Hybrid,
+        runtime_note: "HTTP timing runs on Vercel. Browser metrics need the optional worker.",
+        params: &[
+            p("url", "string", true, "Public http(s) URL"),
+            p("browser", "boolean", false, "Real browser metrics via the worker"),
+        ],
+        example_request: r#"{"url": "https://example.com"}"#,
+        example_response: r#"{"url": "https://example.com/", "status": 200, "measurement": "http_fetch", "elapsed_ms": 241, "first_byte_ms": 198, "html_bytes": 1256, "redirect_count": 0, "declared_resource_count": 0, "browser_metrics": null}"#,
+        errors: FETCH_ERRORS,
+        related: &[],
+    },
+    ApiSpec {
+        number: 9,
+        slug: "url-check",
+        name: "URL Safety",
+        method: "POST",
+        path: "/api/v1/url/check",
+        summary: "Transparent heuristic risk scoring with redirect inspection.",
+        description: "Scores a URL with explainable static heuristics (credentials in the authority, IP hosts, punycode, risky TLDs, shorteners, credential-lure keywords, length and encoding), resolves its registrable domain from the Public Suffix List, and optionally follows redirects safely to detect downgrades and cross-domain hops. Every point carries a reason. No reputation or malware database is used, and a low score is not a safety guarantee.",
+        permission: "url",
+        cost: 1,
+        runtime: Runtime::Vercel,
+        runtime_note: "Fully served by the Rust function on Vercel.",
+        params: &[
+            p("url", "string", true, "URL to analyse"),
+            p("follow_redirects", "boolean", false, "Fetch and inspect redirects (default true)"),
+        ],
+        example_request: r#"{"url": "http://secure-login.example-account.top/verify"}"#,
+        example_response: r#"{"valid": true, "domain": {"host": "secure-login.example-account.top", "registrable_domain": "example-account.top", "public_suffix": "top"}, "risk_score": 55, "risk_level": "high", "reasons": ["+15 unencrypted http scheme", "+10 top-level domain frequently seen in abuse reports", "+15 multiple credential-lure keywords"], "malware_detection": false}"#,
+        errors: &[],
+        related: &[],
+    },
+    ApiSpec {
+        number: 10,
+        slug: "email",
+        name: "Email Validation",
+        method: "POST",
+        path: "/api/v1/email/validate",
+        summary: "Syntax, MX, SPF/DMARC, disposable, role and typo checks; no mailbox probing.",
+        description: "Validates syntax, then resolves MX, A/AAAA, SPF and DMARC records to produce domain-level deliverability indicators. Flags disposable providers, role accounts and likely typos of major providers. It never connects to mail servers or probes individual mailboxes.",
+        permission: "email",
+        cost: 1,
+        runtime: Runtime::Vercel,
+        runtime_note: "Fully served by the Rust function on Vercel (DNS only).",
+        params: &[p("email", "string", true, "Address to validate")],
+        example_request: r#"{"email": "someone@gmial.com"}"#,
+        example_response: r#"{"email": "someone@gmial.com", "syntax_valid": true, "domain": "gmial.com", "mx_records": [], "spf_record": false, "dmarc_record": false, "disposable": false, "role_account": false, "did_you_mean": "someone@gmail.com", "deliverability": "domain_has_no_mail_records", "mailbox_verified": false}"#,
+        errors: &[],
+        related: &[],
+    },
+    ApiSpec {
+        number: 11,
+        slug: "extract",
+        name: "Website to API",
+        method: "POST",
+        path: "/api/v1/extract/create",
+        summary: "Saved extraction definitions served as JSON with scheduled refresh.",
+        description: "Saves a named extraction (URL + OzyScrape rules) for permitted public data and runs it immediately. The result is cached and served from GET /api/v1/extract/{id}; refreshes happen on a schedule (5 minutes to 24 hours) or on demand with ?refresh=true (at most once a minute). Usage counters track reads and refreshes.",
+        permission: "extract",
+        cost: 1,
+        runtime: Runtime::Vercel,
+        runtime_note: "Runs on Vercel. Scheduled refreshes are triggered by /api/v1/internal/tick.",
+        params: &[
+            p("name", "string", true, "Display name (1-80 bytes)"),
+            p("url", "string", true, "Public page to extract from"),
+            p("rules[]", "object[]", true, "OzyScrape rules (see Web Scraper)"),
+            p("refresh_seconds", "integer", false, "300-86400 (default 3600)"),
+            p("markdown", "boolean", false, "Include Markdown in results"),
+        ],
+        example_request: r#"{"name": "Rust releases", "url": "https://blog.rust-lang.org/", "rules": [{"name": "titles", "selector": "table a"}], "refresh_seconds": 3600}"#,
+        example_response: r#"{"id": "9b0e…", "name": "Rust releases", "endpoint": "https://dev.itsozy.lol/api/v1/extract/9b0e…", "result": {"fields": {"titles": {"values": ["…"], "match_type": "exact"}}}, "usage": {"fetch_count": 0, "refresh_count": 1}}"#,
+        errors: FETCH_ERRORS,
+        related: &[
+            ("GET", "/api/v1/extract", "List saved extractions"),
+            ("GET", "/api/v1/extract/{id}", "Latest result; ?refresh=true to refresh now"),
+            ("DELETE", "/api/v1/extract/{id}", "Delete a definition"),
+        ],
+    },
+    ApiSpec {
+        number: 12,
+        slug: "webhooks",
+        name: "Webhook Relay",
+        method: "POST",
+        path: "/api/v1/webhooks",
+        summary: "Signed inbound webhooks, event filtering, retries and delivery logs.",
+        description: "Creates a relay with a private receive URL and a signing secret. Senders must sign requests (timestamped HMAC-SHA256, or GitHub's x-hub-signature-256), so the endpoint cannot act as an open relay. Accepted events are de-duplicated, filtered by event-type patterns, re-signed and forwarded to your public HTTPS destination without following redirects. Failed deliveries retry with exponential backoff (6 attempts), every attempt is logged, and final failures create a notification.",
+        permission: "webhooks",
+        cost: 1,
+        runtime: Runtime::Vercel,
+        runtime_note: "Runs on Vercel. Retries are driven by /api/v1/internal/tick.",
+        params: &[
+            p("destination", "string", true, "Public https URL that receives forwarded events"),
+            p(
+                "event_types",
+                "string[]",
+                false,
+                "Patterns such as \"order.*\" or \"push\" (default [\"*\"])",
+            ),
+        ],
+        example_request: r#"{"destination": "https://hooks.example.com/ozy", "event_types": ["order.*"]}"#,
+        example_response: r#"{"id": "3c55…", "receive_url": "https://dev.itsozy.lol/api/v1/hooks/3c55…", "secret": "whsec_…", "event_types": ["order.*"]}"#,
+        errors: &[
+            (
+                401,
+                "invalid_signature",
+                "Inbound request was unsigned, stale or incorrectly signed",
+            ),
+            (413, "payload_too_large", "Inbound payload exceeded 256 KiB"),
+        ],
+        related: &[
+            ("POST", "/api/v1/hooks/{id}", "Public signed receive endpoint"),
+            ("GET", "/api/v1/webhooks", "List relays"),
+            ("GET", "/api/v1/webhooks/{id}/deliveries", "Delivery log with every attempt"),
+            ("DELETE", "/api/v1/webhooks/{id}", "Delete a relay"),
+        ],
+    },
+];
+
+pub fn find(slug: &str) -> Option<&'static ApiSpec> {
+    APIS.iter().find(|a| a.slug == slug)
+}
